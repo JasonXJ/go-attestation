@@ -12,10 +12,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-//go:build (!localtest || !tpm12) && cgo && !gofuzz
-// +build !localtest !tpm12
-// +build cgo
-// +build !gofuzz
+//go:build !localtest && cgo && !gofuzz
+// +build !localtest,cgo,!gofuzz
 
 // NOTE: simulator requires cgo, hence the build tag.
 
@@ -42,7 +40,7 @@ func setupSimulatedTPM(t *testing.T) (*simulator.Simulator, *TPM) {
 	return tpm, attestTPM
 }
 
-func TestSimTPM20EK(t *testing.T) {
+func TestSimEK(t *testing.T) {
 	sim, tpm := setupSimulatedTPM(t)
 	defer sim.Close()
 
@@ -55,7 +53,7 @@ func TestSimTPM20EK(t *testing.T) {
 	}
 }
 
-func TestSimTPM20Info(t *testing.T) {
+func TestSimInfo(t *testing.T) {
 	sim, tpm := setupSimulatedTPM(t)
 	defer sim.Close()
 
@@ -64,7 +62,7 @@ func TestSimTPM20Info(t *testing.T) {
 	}
 }
 
-func TestSimTPM20AKCreateAndLoad(t *testing.T) {
+func TestSimAKCreateAndLoad(t *testing.T) {
 	sim, tpm := setupSimulatedTPM(t)
 	defer sim.Close()
 	for _, test := range []struct {
@@ -120,11 +118,11 @@ func TestSimTPM20AKCreateAndLoad(t *testing.T) {
 	}
 }
 
-func TestSimTPM20ActivateCredential(t *testing.T) {
+func TestSimActivateCredential(t *testing.T) {
 	testActivateCredential(t, false)
 }
 
-func TestSimTPM20ActivateCredentialWithEK(t *testing.T) {
+func TestSimActivateCredentialWithEK(t *testing.T) {
 	testActivateCredential(t, true)
 }
 
@@ -136,7 +134,10 @@ func testActivateCredential(t *testing.T, useEK bool) {
 	if err != nil {
 		t.Fatalf("EKs() failed: %v", err)
 	}
-	ek := chooseEK(t, EKs)
+	if len(EKs) == 0 {
+		t.Fatalf("No suitable EK found")
+	}
+	ek := EKs[0]
 
 	ak, err := tpm.NewAK(nil)
 	if err != nil {
@@ -145,9 +146,8 @@ func testActivateCredential(t *testing.T, useEK bool) {
 	defer ak.Close(tpm)
 
 	ap := ActivationParameters{
-		TPMVersion: TPMVersion20,
-		AK:         ak.AttestationParameters(),
-		EK:         ek.Public,
+		AK: ak.AttestationParameters(),
+		EK: ek.Public,
 	}
 	secret, challenge, err := ap.Generate()
 	if err != nil {
@@ -170,7 +170,7 @@ func testActivateCredential(t *testing.T, useEK bool) {
 	}
 }
 
-func TestParseAKPublic20(t *testing.T) {
+func TestParseAKPublic(t *testing.T) {
 	sim, tpm := setupSimulatedTPM(t)
 	defer sim.Close()
 
@@ -180,12 +180,12 @@ func TestParseAKPublic20(t *testing.T) {
 	}
 	defer ak.Close(tpm)
 	params := ak.AttestationParameters()
-	if _, err := ParseAKPublic(TPMVersion20, params.Public); err != nil {
+	if _, err := ParseAKPublic(params.Public); err != nil {
 		t.Errorf("parsing AK public blob: %v", err)
 	}
 }
 
-func TestSimTPM20QuoteAndVerifyAll(t *testing.T) {
+func TestSimQuoteAndVerifyAll(t *testing.T) {
 	sim, tpm := setupSimulatedTPM(t)
 	defer sim.Close()
 
@@ -216,7 +216,7 @@ func TestSimTPM20QuoteAndVerifyAll(t *testing.T) {
 		pcrs = append(pcrs, p...)
 	}
 
-	pub, err := ParseAKPublic(tpm.Version(), ak.AttestationParameters().Public)
+	pub, err := ParseAKPublic(ak.AttestationParameters().Public)
 	if err != nil {
 		t.Fatalf("ParseAKPublic() failed: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestSimTPM20QuoteAndVerifyAll(t *testing.T) {
 	}
 }
 
-func TestSimTPM20AttestPlatform(t *testing.T) {
+func TestSimAttestPlatform(t *testing.T) {
 	sim, tpm := setupSimulatedTPM(t)
 	defer sim.Close()
 
@@ -248,7 +248,7 @@ func TestSimTPM20AttestPlatform(t *testing.T) {
 		t.Fatalf("AttestPlatform() failed: %v", err)
 	}
 
-	pub, err := ParseAKPublic(attestation.TPMVersion, attestation.Public)
+	pub, err := ParseAKPublic(attestation.Public)
 	if err != nil {
 		t.Fatalf("ParseAKPublic() failed: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestSimTPM20AttestPlatform(t *testing.T) {
 	}
 }
 
-func TestSimTPM20PCRs(t *testing.T) {
+func TestSimPCRs(t *testing.T) {
 	sim, tpm := setupSimulatedTPM(t)
 	defer sim.Close()
 
@@ -282,11 +282,11 @@ func TestSimTPM20PCRs(t *testing.T) {
 	}
 }
 
-func TestSimTPM20PersistenceSRK(t *testing.T) {
+func TestSimPersistenceSRK(t *testing.T) {
 	testPersistenceSRK(t, defaultParentConfig)
 }
 
-func TestSimTPM20PersistenceECCSRK(t *testing.T) {
+func TestSimPersistenceECCSRK(t *testing.T) {
 	parentConfig := ParentKeyConfig{
 		Algorithm: ECDSA,
 		Handle:    0x81000002,
@@ -318,7 +318,7 @@ func testPersistenceSRK(t *testing.T, parentConfig ParentKeyConfig) {
 	}
 }
 
-func TestSimTPM20PersistenceEK(t *testing.T) {
+func TestSimPersistenceEK(t *testing.T) {
 	sim, tpm := setupSimulatedTPM(t)
 	defer sim.Close()
 

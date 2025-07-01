@@ -16,6 +16,7 @@ package attest
 
 import (
 	"bytes"
+	"crypto"
 	"encoding/base64"
 	"encoding/json"
 	"os"
@@ -27,8 +28,7 @@ import (
 // Dump describes the layout of serialized information from the dump command.
 type Dump struct {
 	Static struct {
-		TPMVersion TPMVersion
-		EKPem      []byte
+		EKPem []byte
 	}
 
 	AK AttestationParameters
@@ -49,10 +49,6 @@ type Dump struct {
 
 func TestParseEventLogWindows(t *testing.T) {
 	testParseEventLog(t, "testdata/windows_gcp_shielded_vm.json")
-}
-
-func TestParseEventLogLinux(t *testing.T) {
-	testParseEventLog(t, "testdata/linux_tpm12.json")
 }
 
 func testParseEventLog(t *testing.T, testdata string) {
@@ -79,10 +75,6 @@ func TestParseCryptoAgileEventLog(t *testing.T) {
 	}
 }
 
-func TestEventLogLinux(t *testing.T) {
-	testEventLog(t, "testdata/linux_tpm12.json")
-}
-
 func TestEventLog(t *testing.T) {
 	testEventLog(t, "testdata/windows_gcp_shielded_vm.json")
 }
@@ -97,12 +89,11 @@ func testEventLog(t *testing.T, testdata string) {
 		t.Fatalf("parsing test data: %v", err)
 	}
 
-	ak, err := ParseAKPublic(dump.Static.TPMVersion, dump.AK.Public)
+	ak, err := ParseAKPublic(dump.AK.Public)
 	if err != nil {
 		t.Fatalf("parsing AK: %v", err)
 	}
 	if err := ak.Verify(Quote{
-		Version:   dump.Static.TPMVersion,
 		Quote:     dump.Quote.Quote,
 		Signature: dump.Quote.Signature,
 	}, dump.Log.PCRs, dump.Quote.Nonce); err != nil {
@@ -350,7 +341,7 @@ func TestEBSVerifyWorkaround(t *testing.T) {
 				0x31, 0x24, 0x58, 0x08, 0xd6, 0xd3, 0x58, 0x49, 0xbc, 0x39,
 				0x4f, 0x63, 0x43, 0xf2, 0xb3, 0xff, 0x90, 0x8e, 0xd5, 0xe3,
 			},
-			DigestAlg: HashSHA1.cryptoHash(),
+			DigestAlg: crypto.SHA1,
 		},
 		{
 			Index: 5,
@@ -359,7 +350,7 @@ func TestEBSVerifyWorkaround(t *testing.T) {
 				0xe4, 0x52, 0xe2, 0x69, 0xad, 0x14, 0xac, 0x52, 0x2a, 0xb8, 0xbf,
 				0x0c, 0x88, 0xe1, 0x16, 0x16, 0xde, 0x4c, 0x22, 0x2f, 0x7d,
 			},
-			DigestAlg: HashSHA256.cryptoHash(),
+			DigestAlg: crypto.SHA256,
 		},
 	}
 

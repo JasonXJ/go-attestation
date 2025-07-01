@@ -34,11 +34,13 @@ var (
 )
 
 var (
-	oidSignatureRSASha1   = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 5}
-	oidSignatureRSAPSS    = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 10}
-	oidSignatureRSASha256 = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 11}
-	oidSignatureRSASha384 = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 12}
-	oidSignatureEd25519   = asn1.ObjectIdentifier{1, 3, 101, 112}
+	oidSignatureRSASha1     = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 5}
+	oidSignatureRSAPSS      = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 10}
+	oidSignatureRSASha256   = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 11}
+	oidSignatureRSASha384   = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 12}
+	oidSignatureEd25519     = asn1.ObjectIdentifier{1, 3, 101, 112}
+	oidSignatureECDSASha256 = asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 3, 2}
+	oidSignatureECDSASha512 = asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 3, 4}
 
 	oidSHA256 = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 1}
 	oidSHA384 = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 2}
@@ -61,6 +63,8 @@ var signatureAlgorithmDetails = []struct {
 	{x509.SHA384WithRSAPSS, "SHA384-RSAPSS", oidSignatureRSAPSS, x509.RSA, crypto.SHA384},
 	{x509.SHA512WithRSAPSS, "SHA512-RSAPSS", oidSignatureRSAPSS, x509.RSA, crypto.SHA512},
 	{x509.PureEd25519, "Ed25519", oidSignatureEd25519, x509.Ed25519, crypto.Hash(0) /* no pre-hashing */},
+	{x509.ECDSAWithSHA256, "ecdsaWithSHA256", oidSignatureECDSASha256, x509.ECDSA, crypto.SHA256},
+	{x509.ECDSAWithSHA512, "ecdsaWithSHA512", oidSignatureECDSASha512, x509.ECDSA, crypto.SHA512},
 }
 
 // pssParameters reflects the parameters in an AlgorithmIdentifier that
@@ -177,7 +181,7 @@ type userNotice struct {
 // RFC 5755 4.1
 type objectDigestInfo struct {
 	DigestedObjectType asn1.Enumerated
-	OtherObjectTypeID  asn1.ObjectIdentifier
+	OtherObjectTypeID  asn1.ObjectIdentifier `asn1:"optional"`
 	DigestAlgorithm    pkix.AlgorithmIdentifier
 	ObjectDigest       asn1.BitString
 }
@@ -281,7 +285,8 @@ func ParseAttributeCertificate(asn1Data []byte) (*AttributeCertificate, error) {
 	rest, err := asn1.Unmarshal(asn1Data, &cert)
 	if err != nil {
 		return nil, err
-	} else if len(rest) != 0 {
+	}
+	if len(rest) != 0 {
 		return nil, asn1.SyntaxError{Msg: "attributecert: trailing data"}
 	}
 
@@ -460,7 +465,8 @@ func unmarshalSAN(v asn1.RawValue) ([]pkix.AttributeTypeAndValue, error) {
 		rest, err := asn1.Unmarshal(v.Bytes, &platformData)
 		if err != nil {
 			return nil, err
-		} else if len(rest) != 0 {
+		}
+		if len(rest) != 0 {
 			return nil, errors.New("attributecert: trailing data after X.509 subject")
 		}
 		for _, e := range platformData {
@@ -603,7 +609,8 @@ func parseAttributeCertificate(in *attributeCertificate) (*AttributeCertificate,
 			rest, err := asn1.Unmarshal(extension.Value, &seq)
 			if err != nil {
 				return nil, err
-			} else if len(rest) != 0 {
+			}
+			if len(rest) != 0 {
 				return nil, errors.New("attributecert: trailing data after X.509 extension")
 			}
 			rest = seq.Bytes
@@ -632,7 +639,6 @@ func parseAttributeCertificate(in *attributeCertificate) (*AttributeCertificate,
 						out.PlatformManufacturer = e.Value.(string)
 					case e.Type.Equal(oid.PlatformManufacturerID):
 						// We can't parse these out at present
-						break
 					case e.Type.Equal(oid.PlatformModel):
 						out.PlatformModel = e.Value.(string)
 					case e.Type.Equal(oid.PlatformVersion):
@@ -650,7 +656,8 @@ func parseAttributeCertificate(in *attributeCertificate) (*AttributeCertificate,
 			rest, err := asn1.Unmarshal(extension.Value, &seq)
 			if err != nil {
 				return nil, err
-			} else if len(rest) != 0 {
+			}
+			if len(rest) != 0 {
 				return nil, errors.New("attributecert: trailing data after X.509 extension")
 			}
 			rest = seq.Bytes
@@ -734,9 +741,9 @@ func parseAttributeCertificate(in *attributeCertificate) (*AttributeCertificate,
 			}
 			for _, v := range aia {
 				if v.Method.Equal(oidAuthorityInfoAccessOcsp) {
-					//TODO
+					// TODO
 				} else if v.Method.Equal(oidAuthorityInfoAccessIssuers) {
-					//TODO
+					// TODO
 				} else {
 					return nil, fmt.Errorf("attributecert: unhandled Authority Info Access type %v", v.Method)
 				}

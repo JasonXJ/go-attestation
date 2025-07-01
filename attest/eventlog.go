@@ -28,7 +28,6 @@ import (
 	"strings"
 
 	"github.com/google/go-tpm/legacy/tpm2"
-	"github.com/google/go-tpm/tpmutil"
 )
 
 // ReplayError describes the parsed events that failed to verify against
@@ -197,7 +196,7 @@ func (e *EventLog) Events(hash HashAlg) []Event {
 		}
 
 		for _, digest := range re.digests {
-			if hash.cryptoHash() != digest.hash {
+			if hash, err := hash.cryptoHash(); hash != digest.hash || err != nil {
 				continue
 			}
 			ev.Digest = digest.data
@@ -250,76 +249,7 @@ func (e *EventLog) verify(pcrs []PCR) ([]Event, error) {
 	return events, nil
 }
 
-type rawAttestationData struct {
-	Version [4]byte  // This MUST be 1.1.0.0
-	Fixed   [4]byte  // This SHALL always be the string ‘QUOT’
-	Digest  [20]byte // PCR Composite Hash
-	Nonce   [20]byte // Nonce Hash
-}
-
-var (
-	fixedQuote = [4]byte{'Q', 'U', 'O', 'T'}
-)
-
-type rawPCRComposite struct {
-	Size    uint16 // always 3
-	PCRMask [3]byte
-	Values  tpmutil.U32Bytes
-}
-
-func (a *AKPublic) validate12Quote(quote Quote, pcrs []PCR, nonce []byte) error {
-	pub, ok := a.Public.(*rsa.PublicKey)
-	if !ok {
-		return fmt.Errorf("unsupported public key type: %T", a.Public)
-	}
-	qHash := sha1.Sum(quote.Quote)
-	if err := rsa.VerifyPKCS1v15(pub, crypto.SHA1, qHash[:], quote.Signature); err != nil {
-		return fmt.Errorf("invalid quote signature: %v", err)
-	}
-
-	var att rawAttestationData
-	if _, err := tpmutil.Unpack(quote.Quote, &att); err != nil {
-		return fmt.Errorf("parsing quote: %v", err)
-	}
-	// TODO(ericchiang): validate Version field.
-	if att.Nonce != sha1.Sum(nonce) {
-		return fmt.Errorf("invalid nonce")
-	}
-	if att.Fixed != fixedQuote {
-		return fmt.Errorf("quote wasn't a QUOT object: %x", att.Fixed)
-	}
-
-	// See 5.4.1 Creating a PCR composite hash
-	sort.Slice(pcrs, func(i, j int) bool { return pcrs[i].Index < pcrs[j].Index })
-	var (
-		pcrMask [3]byte // bitmap indicating which PCRs are active
-		values  []byte  // appended values of all PCRs
-	)
-	for _, pcr := range pcrs {
-		if pcr.Index < 0 || pcr.Index >= 24 {
-			return fmt.Errorf("invalid PCR index: %d", pcr.Index)
-		}
-		pcrMask[pcr.Index/8] |= 1 << uint(pcr.Index%8)
-		values = append(values, pcr.Digest...)
-	}
-	composite, err := tpmutil.Pack(rawPCRComposite{3, pcrMask, values})
-	if err != nil {
-		return fmt.Errorf("marshaling PCRs: %v", err)
-	}
-	if att.Digest != sha1.Sum(composite) {
-		return fmt.Errorf("PCRs passed didn't match quote: %v", err)
-	}
-
-	// All provided PCRs are used to construct the composite hash which
-	// is verified against the quote (for TPM 1.2), so if we got this far,
-	// all PCR values are verified.
-	for i := range pcrs {
-		pcrs[i].quoteVerified = true
-	}
-	return nil
-}
-
-func (a *AKPublic) validate20Quote(quote Quote, pcrs []PCR, nonce []byte) error {
+func (a *AKPublic) validateQuote(quote Quote, pcrs []PCR, nonce []byte) error {
 	sig, err := tpm2.DecodeSignature(bytes.NewBuffer(quote.Signature))
 	if err != nil {
 		return fmt.Errorf("parse quote signature: %v", err)
@@ -354,7 +284,10 @@ func (a *AKPublic) validate20Quote(quote Quote, pcrs []PCR, nonce []byte) error 
 	}
 
 	pcrByIndex := map[int][]byte{}
-	pcrDigestAlg := HashAlg(att.AttestedQuoteInfo.PCRSelection.Hash).cryptoHash()
+	pcrDigestAlg, err := HashAlg(att.AttestedQuoteInfo.PCRSelection.Hash).cryptoHash()
+	if err != nil {
+		return fmt.Errorf("invalid PCR selection hash: %v", err)
+	}
 	for _, pcr := range pcrs {
 		if pcr.DigestAlg == pcrDigestAlg {
 			pcrByIndex[pcr.Index] = pcr.Digest
@@ -495,6 +428,7 @@ pcrLoop:
 		for _, e := range rawEvents {
 			events = append(events, Event{e.sequence, e.index, e.typ, e.data, nil})
 		}
+		sort.Ints(invalidReplays)
 		return nil, ReplayError{
 			Events:      events,
 			InvalidPCRs: invalidReplays,
@@ -724,7 +658,10 @@ func parseRawEvent2(r *bytes.Buffer, specID *specIDEvent) (event rawEvent, err e
 				return event, fmt.Errorf("reading digest: %v", io.ErrUnexpectedEOF)
 			}
 			digest.data = make([]byte, alg.Size)
-			digest.hash = HashAlg(alg.ID).cryptoHash()
+			digest.hash, err = HashAlg(alg.ID).cryptoHash()
+			if err != nil {
+				return event, fmt.Errorf("unknown algorithm ID %x: %v", algID, err)
+			}
 		}
 		if len(digest.data) == 0 {
 			return event, fmt.Errorf("unknown algorithm ID %x", algID)
@@ -784,7 +721,7 @@ func AppendEvents(base []byte, additional ...[]byte) ([]byte, error) {
 					continue algCheck
 				}
 			}
-			return nil, fmt.Errorf("log %d: cannot use digest (%+v) not present in base log", i, alg)
+			return nil, fmt.Errorf("log %d: cannot use digest (%+v) not present in base log. Base log has digests: %+v", i, alg, baseLog.specIDEvent.algs)
 		}
 
 		for x, e := range log.rawEvents {
